@@ -1,9 +1,9 @@
 import math
 
 
-MAX_LR = 6e-5
+MAX_LR = 6e-4
 MIN_LR = MAX_LR * 0.1
-WARMUP_STEPS = 10
+WARMUP_STEPS = 1
 
 
 def get_lr(it, max_steps):

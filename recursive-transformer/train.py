@@ -5,8 +5,8 @@ from optimizer import *
 import time
 
 def train(model, train_loader, optimizer):
-    max_steps = 200
-    total_batch_size = 524288 #2**19 tokens
+    total_batch_size = train_loader.B * train_loader.T #2**19 tokens
+    max_steps = 50
     grad_accum_steps = total_batch_size // (train_loader.B * train_loader.T)
     assert total_batch_size % (B * T) == 0
     for step in range(max_steps):
@@ -50,7 +50,7 @@ if __name__== "__main__":
     B = 16
     T = 512
     train_loader = DataLoaderLite(B=B, T=T)
-    model = GPT(GPTConfig())
+    model = GPT(GPTConfig(vocab_size=50304))
     model.to(device)
     model = torch.compile(model, backend='inductor')
 
