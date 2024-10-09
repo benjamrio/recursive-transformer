@@ -18,17 +18,18 @@ if __name__== "__main__":
     print(f"Running on {device}")
     setup_session_config()
 
-    B = 16
-    T = 512
+    B = 32
+    T = 256
+    total_batch_size = train_loader.B * train_loader.T
+
     train_loader = DataLoaderLite(B=B, T=T)
     model = GPT(GPTConfig(vocab_size=50304))
     model.to(device)
     #model = torch.compile(model, backend='inductor')
 
     optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4, device=device)
-    total_batch_size = train_loader.B * train_loader.T
 
-    max_steps = 50
+    max_steps = 200
     grad_accum_steps = total_batch_size // (train_loader.B * train_loader.T)
     assert total_batch_size % (B * T) == 0
 
