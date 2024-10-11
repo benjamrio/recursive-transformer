@@ -113,8 +113,13 @@ class GPT(nn.Module):
         logits = self.lm_head(x) # (B, T, vocab_size)
         loss = None
         if targets is not None:
-            predictions = logits[:, T_past:, ].reshape(-1, logits.size(-1))
-            loss = F.cross_entropy(predictions, targets.view(-1))
+            if (T_prst == 1):
+                skip_first = 0
+            else:
+                skip_first = 1
+            predictions = logits[:, T_past+skip_first:, :].squeeze(1)
+            targets = targets[:, skip_first:].view(-1)
+            loss = F.cross_entropy(predictions, targets)
         return logits, loss, embs
 
 
