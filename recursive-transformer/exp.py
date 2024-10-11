@@ -28,23 +28,26 @@ if __name__== "__main__":
     setup_session_config()
 
     B = 32
-    T = 128
-    total_batch_size = B * T
+    T_prst = 1
+    total_batch_size = B * T_prst
 
-    train_loader = DatasetLoader(file_path='data/input.txt', B=B, T=T, sampler='sequential')
-    vocab_size = 50304
-    config = GPTConfig(vocab_size=vocab_size)
+    dataset = XorDataset(n=10002)
+    train_loader = DatasetLoader(B=B, T=T_prst, dataset=dataset, sampler='sequential')
+    vocab_size = 2
+    config = GPTConfig(vocab_size=vocab_size, block_size=2)
     model = GPT(config)
     model.to(device)
     #model = torch.compile(model, backend='inductor')
 
-    optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4, device=device)
+    optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=3e-5, device=device)
 
     max_steps = 200
     grad_accum_steps = total_batch_size // (train_loader.B * train_loader.T)
-    assert total_batch_size % (B * T) == 0
+    print(grad_accum_steps)
+    assert total_batch_size % (B * T_prst) == 0
 
-    past_embs = torch.full((B, T, config.d_emb), 0).to(device)
+    T_past = 1
+    past_embs = torch.full((B, T_past, config.d_emb), 0).to(device)
 
     for step in range(max_steps):
         t0 = time.time()
@@ -60,7 +63,7 @@ if __name__== "__main__":
         loss_accum += loss.detach()
         loss.backward()
 
-        past_embs = embs[:, :T, :].detach() #! should we propagate one time ?
+        past_embs = embs[:, :T_past, :].detach() # ! should we propagate one time through graph??
 
         norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         lr = get_lr(step, max_steps)

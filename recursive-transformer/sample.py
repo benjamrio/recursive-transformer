@@ -10,7 +10,8 @@ torch.cuda.manual_seed(42)
 if __name__ == "__main__":
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   print(f"Using device: {device}")
-  model = GPT(GPTConfig(vocab_size=50304))
+  gpt_config = GPTConfig(vocab_size=50304)
+  model = GPT(gpt_config)
   model.to(device)
   save_dir = 'outputs'
 
@@ -26,14 +27,17 @@ if __name__ == "__main__":
   model.eval()
   num_return_sequences = 5
   max_length = 30
-  enc = tiktoken.get_encoding('gpt2')
-  tokens = enc.encode("Hello, I'm a language model,")
+
   tokens = torch.tensor(tokens, dtype=torch.long) # (8,)
   tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1) # (5, 8)
   x = tokens.to(device)
+  T_past = 128
+  past_embs = torch.full((num_return_sequences, T_past, gpt_config.d_emb), 0).to(device)
+  print(past_embs.shape)
   while x.size(1) < max_length:
     with torch.no_grad():
-      logits, _ = model(x) # (B, T, vocab_size)
+      logits, _, past_embs = model(x, past_embs) # (B, T, vocab_size)
+      past_embs = past_embs[:, :T_past, ].detach()
 
       logits = logits[:, -1, :] # (B, vocab_size)
       probs = F.softmax(logits, dim=-1)
@@ -41,6 +45,7 @@ if __name__ == "__main__":
       ix = torch.multinomial(topk_probs, 1) # (B, 1)
       xcol = torch.gather(topk_indices, -1, ix) # (B, 1)
       x = torch.cat((x, xcol), dim=1)
+
   # print the generated text
   for i in range(num_return_sequences):
       tokens = x[i, :max_length].tolist()

@@ -10,14 +10,14 @@ class GPTConfig:
   vocab_size: int = 50257
   n_layer: int = 12
   n_head: int = 12
-  d_embd: int = 768
+  d_emb: int = 768
 
 class MLP(nn.Module):
-  def __init__(self, d_embd):
+  def __init__(self, d_emb):
     super().__init__()
-    self.c_fc = nn.Linear(d_embd, 4 * d_embd)
+    self.c_fc = nn.Linear(d_emb, 4 * d_emb)
     self.gelu = nn.GELU(approximate="tanh")
-    self.c_proj = nn.Linear(4 * d_embd, d_embd)
+    self.c_proj = nn.Linear(4 * d_emb, d_emb)
 
   def forward(self, x):
     x = self.c_fc(x)
@@ -29,34 +29,34 @@ class MLP(nn.Module):
 class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
-        assert config.d_embd % config.n_head == 0
-        self.c_attn = nn.Linear(config.d_embd, 3*config.d_embd)
-        self.c_proj = nn.Linear(config.d_embd, config.d_embd)
+        assert config.d_emb % config.n_head == 0
+        self.c_attn = nn.Linear(config.d_emb, 3*config.d_emb)
+        self.c_proj = nn.Linear(config.d_emb, config.d_emb)
         self.c_proj.NANOGPT_SCALE_INIT = 1
         self.n_head = config.n_head
-        self.d_embd = config.d_embd
+        self.d_emb = config.d_emb
         self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                      .view(1, 1, config.block_size, config.block_size))
 
     def forward(self, x):
-        B, T, d_embd = x.size()
+        B, T, d_emb = x.size()
         qkv = self.c_attn(x)
-        q, k, v = qkv.split(self.d_embd, dim=2)
-        k = k.view(B, T, self.n_head, d_embd // self.n_head).transpose(1, 2)
-        q = q.view(B, T, self.n_head, d_embd // self.n_head).transpose(1, 2)
-        v = v.view(B, T, self.n_head, d_embd // self.n_head).transpose(1, 2)
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
-        y = y.transpose(1, 2).contiguous().view(B, T, d_embd)
+        q, k, v = qkv.split(self.d_emb, dim=2)
+        k = k.view(B, T, self.n_head, d_emb // self.n_head).transpose(1, 2)
+        q = q.view(B, T, self.n_head, d_emb // self.n_head).transpose(1, 2)
+        v = v.view(B, T, self.n_head, d_emb // self.n_head).transpose(1, 2)
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=False)
+        y = y.transpose(1, 2).contiguous().view(B, T, d_emb)
         y = self.c_proj(y)
         return y
 
 class Block(nn.Module):
   def __init__(self, config):
     super().__init__()
-    self.ln_1 = nn.LayerNorm(config.d_embd)
+    self.ln_1 = nn.LayerNorm(config.d_emb)
     self.attn = CausalSelfAttention(config)
-    self.ln_2 = nn.LayerNorm(config.d_embd)
-    self.mlp = MLP(config.d_embd)
+    self.ln_2 = nn.LayerNorm(config.d_emb)
+    self.mlp = MLP(config.d_emb)
 
   def forward(self, x):
     x = x + self.attn(self.ln_1(x))
@@ -71,12 +71,13 @@ class GPT(nn.Module):
         self.config = config
 
         self.transformer = nn.ModuleDict(dict(
-            wte = nn.Embedding(config.vocab_size, config.d_embd),
-            wpe = nn.Embedding(config.block_size, config.d_embd),
+            # wle = nn.Linear(config.vocab_size, config.d_emb), # logits into embeddings: possible to just take the embedding before conversion in logits
+            wte = nn.Embedding(config.vocab_size, config.d_emb),
+            wpe = nn.Embedding(config.block_size, config.d_emb),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            ln_f = nn.LayerNorm(config.d_embd),
+            ln_f = nn.LayerNorm(config.d_emb),
         ))
-        self.lm_head = nn.Linear(config.d_embd, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.d_emb, config.vocab_size, bias=False)
         self.transformer.wte.weight = self.lm_head.weight
         self.apply(self._init_weights)
 
@@ -91,23 +92,30 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
-        B, T = idx.size() #
-        assert T <= self.config.block_size, f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
-        tok_emb = self.transformer.wte(idx)
-        pos = torch.arange(0, T, dtype=torch.long, device=idx.device) # shape (T)
+    def forward(self, prst_idxs, past_embs, targets=None):
+        B_past, T_past, d_emb = past_embs.size()
+        B_prst, T_prst = prst_idxs.size()
+        assert (B_past == B_prst)
+        assert T_past + T_prst <= self.config.block_size, f"Cannot forward sequence of length {T_past} + {T_prst}, block size is only {self.config.block_size}"
+
+        prst_emb = self.transformer.wte(prst_idxs)
+        tok_emb = torch.cat([past_embs, prst_emb], dim=1)
+
+        pos = torch.arange(0, T_past+T_prst, dtype=torch.long, device=prst_idxs.device)
         pos_emb = self.transformer.wpe(pos)
+
         x = tok_emb + pos_emb
 
         for block in self.transformer.h:
             x = block(x)
 
-        x = self.transformer.ln_f(x)
+        embs = self.transformer.ln_f(x)
         logits = self.lm_head(x) # (B, T, vocab_size)
         loss = None
         if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
-        return logits, loss
+            predictions = logits[:, T_past:, ].reshape(-1, logits.size(-1))
+            loss = F.cross_entropy(predictions, targets.view(-1))
+        return logits, loss, embs
 
 
     def configure_optimizers(self, weight_decay, learning_rate, device):
