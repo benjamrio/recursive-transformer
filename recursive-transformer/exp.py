@@ -28,7 +28,7 @@ if __name__== "__main__":
     setup_session_config()
 
     B = 4
-    T_prst = 2
+    T_prst = 1
     total_batch_size = B * T_prst
 
     dataset = XorDataset(n=10002)
@@ -45,7 +45,7 @@ if __name__== "__main__":
     grad_accum_steps = total_batch_size // (train_loader.B * train_loader.T)
     assert total_batch_size % (B * T_prst) == 0
 
-    T_past = 0
+    T_past = 1
     past_embs = torch.full((B, T_past, config.d_emb), 0).to(device)
 
     for step in range(max_steps):
@@ -62,7 +62,7 @@ if __name__== "__main__":
         loss_accum += loss.detach()
         loss.backward()
 
-        past_embs = embs[:, :T_past, :].detach() # ! should we propagate one time through graph??
+        past_embs = embs[:, :T_past, :].detach()
         norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         #lr = get_lr(step, max_steps)
         #for param_group in optimizer.param_groups:
