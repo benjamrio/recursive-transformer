@@ -28,11 +28,11 @@ if __name__== "__main__":
     setup_session_config()
 
     B = 4
-    T_prst = 1
+    T_prst = 2
     total_batch_size = B * T_prst
 
     dataset = XorDataset(n=10002)
-    train_loader = DatasetLoader(B=B, T=T_prst, dataset=dataset, sampler='sequential')
+    train_loader = DatasetLoader(B=B, T=T_prst, dataset=dataset, sampler='parallel')
     vocab_size = 2
     config = GPTConfig(vocab_size=vocab_size, block_size=4, d_emb=16, n_head=2, n_layer=8)
     model = GPT(config)
@@ -45,7 +45,7 @@ if __name__== "__main__":
     grad_accum_steps = total_batch_size // (train_loader.B * train_loader.T)
     assert total_batch_size % (B * T_prst) == 0
 
-    T_past = 2
+    T_past = 0
     past_embs = torch.full((B, T_past, config.d_emb), 0).to(device)
 
     for step in range(max_steps):
@@ -63,7 +63,6 @@ if __name__== "__main__":
         loss.backward()
 
         past_embs = embs[:, :T_past, :].detach() # ! should we propagate one time through graph??
-        print(past_embs)
         norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         #lr = get_lr(step, max_steps)
         #for param_group in optimizer.param_groups:

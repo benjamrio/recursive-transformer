@@ -37,39 +37,47 @@ class ParallelBatchSampler(Sampler):
         self.data_source = data_source
         self.T = T
         self.B = B # number of workers
-        self.worker_job_length = len(data_source) // B # in characters
-        self.n_sequences_per_worker = self.worker_job_length // self.T
+        self.total_length = len(data_source)
+        self.worker_job_length = self.total_length // B # in characters
+        self.n_sequences_per_worker = self.worker_job_length // self.T # in sequences
 
     def __iter__(self):
-        for worker_nb in range(self.B):
-            for sequence_nb in range(self.n_sequences_per_worker):
+        for sequence_nb in range(self.n_sequences_per_worker):
+            x_indices = []
+            y_indices = []
+            print(sequence_nb)
+            for worker_nb in range(self.B):
                 start = worker_nb * self.worker_job_length + (sequence_nb * self.T)
-                print(start, start +self.T+1)
-                indices = torch.arange(start, start + self.T + 1)
-                yield indices
+                end = start + self.T
+                if end <= self.total_length:
+                    x_indices.extend(range(start, end))
+                    y_indices.extend(range(start+1, end+1))
+            if x_indices and y_indices:
+                yield torch.tensor(x_indices).view(self.B, self.T), torch.tensor(y_indices).view(self.B, self.T)
 
     def __len__(self):
         return self.n_sequences_per_worker * self.T
 
 
 class SequentialBatchSampler(Sampler):
-    def __init__(self, data_source, batch_size, B):
+    def __init__(self, data_source, T, B):
         self.data_source = data_source
-        self.batch_size = batch_size * B
+        self.batch_size = T * B
+        self.B = B
+        self.T = T
 
     def __iter__(self):
         start = 0
         while start < len(self.data_source):
             end = min(start + self.batch_size + 1, len(self.data_source))
             indices = torch.arange(start, end)
-            print(indices.shape)
-            yield indices
+            x = indices[:-1].view(self.B, self.T)
+            y = indices[1:].view(self.B, self.T)
+            yield x, y
             start += self.batch_size
 
     def __len__(self):
         return (len(self.data_source) - 1) // self.batch_size
-
-
 
 
 class DatasetLoader:
@@ -88,13 +96,12 @@ class DatasetLoader:
 
         print(f"Loaded {len(self.dataset)} tokens")
         print(f"1 epoch = {len(self.sampler)} batches")
+        self.iterator = iter(self.dataloader)
 
     def __iter__(self):
+        self.iterator = iter(self.dataloader)
         return self
 
     def __next__(self):
-        batch = next(iter(self.dataloader))
-        print(batch)
-        x = batch[:-1].view(self.B, self.T)
-        y = batch[1:].view(self.B, self.T)
+        x, y = next(self.iterator)
         return x, y

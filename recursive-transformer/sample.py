@@ -28,10 +28,10 @@ if __name__ == "__main__":
   num_return_sequences = 5
   max_length = 30
 
-  tokens = torch.tensor(tokens, dtype=torch.long) # (8,)
+  tokens = torch.tensor([0], dtype=torch.long) # (8,)
   tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1) # (5, 8)
   x = tokens.to(device)
-  T_past = 128
+  T_past = 1
   past_embs = torch.full((num_return_sequences, T_past, gpt_config.d_emb), 0).to(device)
   print(past_embs.shape)
   while x.size(1) < max_length:
