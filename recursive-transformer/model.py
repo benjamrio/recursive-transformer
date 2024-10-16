@@ -3,6 +3,8 @@ import torch.nn as nn
 from torch.nn import functional as F
 from dataclasses import dataclass
 import inspect
+from einops import rearrange, einsum
+import math
 
 @dataclass
 class GPTConfig:
@@ -25,29 +27,42 @@ class MLP(nn.Module):
     x = self.c_proj(x)
     return x
 
+DEFAULT_MASK_VALUE = -0.7 * float(torch.finfo(torch.float32).max)
+
+
+def build_attn_mask(seqlen: int) -> torch.Tensor:
+  mask = None
+  if seqlen > 1:
+      mask = torch.full((seqlen, seqlen), float("-inf"))
+      mask = torch.triu(mask, diagonal=1)
+  return mask
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
         assert config.d_emb % config.n_head == 0
-        self.c_attn = nn.Linear(config.d_emb, 3*config.d_emb)
+        self.c_attn = nn.Linear(config.d_emb, 3 * config.d_emb)
         self.c_proj = nn.Linear(config.d_emb, config.d_emb)
         self.c_proj.NANOGPT_SCALE_INIT = 1
         self.n_head = config.n_head
         self.d_emb = config.d_emb
-        self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
-                                     .view(1, 1, config.block_size, config.block_size))
 
     def forward(self, x):
         B, T, d_emb = x.size()
         qkv = self.c_attn(x)
         q, k, v = qkv.split(self.d_emb, dim=2)
-        k = k.view(B, T, self.n_head, d_emb // self.n_head).transpose(1, 2)
-        q = q.view(B, T, self.n_head, d_emb // self.n_head).transpose(1, 2)
-        v = v.view(B, T, self.n_head, d_emb // self.n_head).transpose(1, 2)
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=False)
-        y = y.transpose(1, 2).contiguous().view(B, T, d_emb)
-        y = self.c_proj(y)
+        k = rearrange(k, 'b t (h d) -> b h t d', h=self.n_head)
+        q = rearrange(q, 'b t (h d) -> b h t d', h=self.n_head)
+        v = rearrange(v, 'b t (h d) -> b h t d', h=self.n_head)
+        dotproducts = einsum(q, k, 'b h i d, b h j d -> b h i j')
+        scale = 1.0 / math.sqrt(k.size(-1)) # root of head dimension
+        scores = (dotproducts * scale).to(torch.float32)
+        #attn_mask = build_attn_mask(T).to(x.device)
+        scores = scores #+ attn_mask
+        attention = F.softmax(scores, dim=-1).to(torch.float32)
+        output = einsum(attention, v, "b h i j, b h j d -> b h i d")
+        output = rearrange(output, 'b h i d -> b i (h d)')
+        y = self.c_proj(output)
         return y
 
 class Block(nn.Module):
